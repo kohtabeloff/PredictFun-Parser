@@ -268,6 +268,7 @@ class PipelineWorker(QThread):
         exclude_tag_names: list[str],
         min_days: int | None,
         require_status: str | None,
+        use_kalshi_filter: bool,
         output_file: str,
     ):
         super().__init__()
@@ -279,6 +280,7 @@ class PipelineWorker(QThread):
         self._exclude_tag_names = exclude_tag_names
         self._min_days = min_days
         self._require_status = require_status or None
+        self._use_kalshi_filter = use_kalshi_filter
         self._output_file = output_file
 
     def run(self):
@@ -294,6 +296,7 @@ class PipelineWorker(QThread):
             exclude_tag_names=self._exclude_tag_names,
             min_days_until_end=self._min_days,
             require_status=self._require_status,
+            use_kalshi_filter=self._use_kalshi_filter,
             output_file=self._output_file,
             date_field_order=None,
             step_callback=on_step,
@@ -391,6 +394,7 @@ def build_step_labels(
     use_all_markets: bool,
     selected_tag_names: list[str],
     has_filter: bool,
+    use_kalshi: bool = False,
 ) -> list[str]:
     labels = ["Ожидаем настроек пользователя"]
     labels.append(
@@ -405,6 +409,8 @@ def build_step_labels(
         labels.append("Проверяем дату и статус")
     else:
         labels.append("Проверка даты и статуса")
+    if use_kalshi:
+        labels.append("Проверяем наличие на Polymarket / Kalshi")
     labels.append("Сохранение результата")
     return labels
 
@@ -574,6 +580,14 @@ class MainWindow(QWidget):
         row2.addStretch()
         opts_layout.addLayout(row2)
 
+        row3 = QHBoxLayout()
+        self.kalshi_check = QCheckBox("Фильтр Polymarket / Kalshi (оставить только маркеты, которые есть на других платформах)")
+        self.kalshi_check.setChecked(False)
+        self.kalshi_check.stateChanged.connect(self._refresh_steps_preview)
+        row3.addWidget(self.kalshi_check)
+        row3.addStretch()
+        opts_layout.addLayout(row3)
+
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
 
@@ -660,7 +674,8 @@ class MainWindow(QWidget):
         days_active = self.days_check.isChecked() and self.days_spin.value() > 0
         status_active = self.status_check.isChecked()
         has_filter = days_active or status_active
-        labels = build_step_labels(use_all, [name for name, _ in selected], has_filter)
+        use_kalshi = self.kalshi_check.isChecked()
+        labels = build_step_labels(use_all, [name for name, _ in selected], has_filter, use_kalshi)
         for i, label in enumerate(labels):
             row = StepRow(i, label)
             self.step_rows.append(row)
@@ -705,6 +720,7 @@ class MainWindow(QWidget):
         exclude_names = [name for name, _ in selected]
         min_days = self.days_spin.value() if self.days_check.isChecked() else None
         status = self.status_combo.currentData() if self.status_check.isChecked() else None
+        use_kalshi = self.kalshi_check.isChecked()
         output = self.output_edit.text().strip() or "result.txt"
         base_url = BASE_URL
 
@@ -727,6 +743,7 @@ class MainWindow(QWidget):
             exclude_tag_names=exclude_names,
             min_days=min_days,
             require_status=status,
+            use_kalshi_filter=use_kalshi,
             output_file=output,
         )
         self.worker.step_update.connect(self._on_step)

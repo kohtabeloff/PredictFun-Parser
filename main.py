@@ -3,12 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from filter_logic import (
-    collect_ids_to_remove,
-    filter_by_min_days_until_end,
-    filter_by_status,
-    subtract_from_list,
-)
+from pipeline_runner import run_pipeline
 
 BASE_URL = "https://api.predict.fun"
 SETTINGS_FILE = Path(__file__).parent / ".settings.json"
@@ -23,61 +18,76 @@ def _load_settings() -> dict:
     return {}
 
 
-def load_market_ids(path: str) -> list[int]:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Файл со списком маркетов не найден: {path}")
-    text = p.read_text(encoding="utf-8").strip().replace("\n", ",")
-    parts = [s.strip() for s in text.split(",") if s.strip()]
-    return [int(x) for x in parts]
-
-
 def cli_main() -> None:
     settings = _load_settings()
+
+    # API-ключ: из переменной окружения или settings.json
     api_key = os.environ.get("PREDICT_FUN_API_KEY") or settings.get("api_key") or ""
     if not api_key:
-        print("API-ключ не найден.")
-        print("Запустите GUI (python main.py) и введите ключ, либо задайте PREDICT_FUN_API_KEY.")
+        print("Ошибка: API-ключ не найден.")
+        print("Добавьте в .settings.json поле api_key или задайте PREDICT_FUN_API_KEY.")
         return
 
-    market_file = settings.get("market_ids_file") or "last_market_ids.txt"
-    market_ids = load_market_ids(market_file)
-    if not market_ids:
-        print(f"Список маркетов пуст ({market_file})")
-        return
+    # Флаги из аргументов командной строки
+    use_all    = "--all"    in sys.argv  # загрузить все маркеты с Predict.fun
+    use_kalshi = "--kalshi" in sys.argv  # включить фильтр Polymarket/Kalshi
 
-    base_url = BASE_URL
-    exclude_tag_ids = settings.get("exclude_tag_ids") or []
+    # Параметры из settings.json
+    market_file   = settings.get("market_ids_file") or "last_market_ids.txt"
+    exclude_ids   = settings.get("exclude_tag_ids") or []
+    exclude_names = settings.get("exclude_tag_names") or exclude_ids
+    min_days      = settings.get("min_days_until_end")
+    require_status= settings.get("require_status") or None
+    output_file   = settings.get("output_file") or "result.txt"
 
-    if not exclude_tag_ids:
-        print("exclude_tag_ids не задан. Результат совпадает с входным списком.")
-
-    ids_to_remove = collect_ids_to_remove(base_url, api_key, exclude_tag_ids)
-    result = subtract_from_list(market_ids, ids_to_remove)
-
-    require_status = settings.get("require_status")
-    min_days = settings.get("min_days_until_end")
-
-    if min_days is not None and min_days > 0:
-        date_fields = ["boostEndsAt", "endDate", "resolutionDate"]
-        before = len(result)
-        result = filter_by_min_days_until_end(
-            base_url, api_key, result, min_days, date_fields, require_status
-        )
-        print("Исключено по тегам:", len(ids_to_remove))
-        print("Исключено по дате/статусу:", before - len(result))
-    elif require_status:
-        before = len(result)
-        result = filter_by_status(base_url, api_key, result, require_status)
-        print("Исключено по тегам:", len(ids_to_remove))
-        print(f"Исключено по статусу (не {require_status}):", before - len(result))
+    print("=" * 50)
+    print("Predict.fun — фильтр маркетов (CLI)")
+    print("=" * 50)
+    if use_all:
+        print("Источник: все маркеты с Predict.fun")
     else:
-        print("Исключено id по тегам:", len(ids_to_remove))
-    print("Осталось id:", len(result))
+        print(f"Источник: файл {market_file}")
+    if exclude_ids:
+        print(f"Исключить теги: {', '.join(map(str, exclude_ids))}")
+    if require_status:
+        print(f"Статус: {require_status}")
+    if min_days:
+        print(f"Мин. дней до конца: {min_days}")
+    if use_kalshi:
+        print("Фильтр: Polymarket / Kalshi — включён")
+    print("-" * 50)
 
-    output_file = settings.get("output_file") or "result.txt"
-    Path(output_file).write_text(",".join(str(x) for x in result), encoding="utf-8")
-    print("Сохранено в", output_file)
+    def on_step(idx: int, status: str, detail: str):
+        if status == "running":
+            pass  # не спамим "запускаем..."
+        elif status == "done":
+            print(f"  ✓ Шаг {idx}: {detail}")
+        elif status == "skip":
+            print(f"  — Шаг {idx}: пропущен ({detail})")
+        elif status == "error":
+            print(f"  ✗ Шаг {idx}: ошибка — {detail}")
+
+    result, err = run_pipeline(
+        api_key=api_key,
+        base_url=BASE_URL,
+        market_ids_file=None if use_all else market_file,
+        use_all_markets=use_all,
+        exclude_tag_ids=exclude_ids,
+        exclude_tag_names=exclude_names,
+        min_days_until_end=min_days,
+        require_status=require_status,
+        use_kalshi_filter=use_kalshi,
+        output_file=output_file,
+        date_field_order=None,
+        step_callback=on_step,
+    )
+
+    print("-" * 50)
+    if err:
+        print(f"Ошибка: {err}")
+    else:
+        print(f"Готово. Осталось маркетов: {len(result)}")
+        print(f"Сохранено в: {output_file}")
 
 
 if __name__ == "__main__":
@@ -90,4 +100,4 @@ if __name__ == "__main__":
         except Exception as e:
             print("Не удалось запустить окно:", e)
             print("Установите PySide6: pip install PySide6")
-            print("Консольный режим: python main.py --cli")
+            print("Консольный режим: python3 main.py --cli")

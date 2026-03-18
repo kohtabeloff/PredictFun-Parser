@@ -7,7 +7,8 @@
   2..K+1   — получаем маркеты по тегу (по одному шагу на каждый exclude_tag_id)
   K+2      — вычитаем из нашего списка
   K+3      — проверяем дату и статус (из кеша при use_all_markets, иначе запросы)
-  K+4      — сохранение
+  K+4      — проверка на Kalshi (только если use_kalshi_filter=True)
+  K+4/K+5  — сохранение (K+4 если без Kalshi, K+5 если с Kalshi)
 """
 import time
 from datetime import date
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from api_client import fetch_all_markets, fetch_market, fetch_market_ids_by_tag, parse_end_date
+from kalshi_filter import filter_by_cross_platform
 
 
 StepCallback = Callable[[int, str, str], None]
@@ -64,8 +66,8 @@ def _check_market(
     return _check_market_from_data(market, min_days, require_status, date_fields, today)
 
 
-def total_steps(exclude_count: int) -> int:
-    return 1 + 1 + exclude_count + 1 + 1 + 1
+def total_steps(exclude_count: int, use_kalshi: bool = False) -> int:
+    return 1 + 1 + exclude_count + 1 + 1 + (1 if use_kalshi else 0) + 1
 
 
 def run_pipeline(
@@ -77,6 +79,7 @@ def run_pipeline(
     exclude_tag_names: list[str],
     min_days_until_end: int | None,
     require_status: str | None,
+    use_kalshi_filter: bool,
     output_file: str,
     date_field_order: list[str] | None,
     step_callback: StepCallback,
@@ -92,7 +95,8 @@ def run_pipeline(
     step_load = 1
     step_subtract = 2 + K
     step_filter = 3 + K
-    step_save = 4 + K
+    step_kalshi = 4 + K
+    step_save = (5 + K) if use_kalshi_filter else (4 + K)
 
     try:
         markets_by_id: dict[int, dict] = {}
@@ -127,7 +131,7 @@ def run_pipeline(
         removed_by_tags = len(market_ids) - len(result)
         step_callback(step_subtract, "done", f"Исключено {removed_by_tags}, осталось {len(result)}")
 
-        # K+3 — проверяем дату и статус (из кеша при use_all_markets, иначе запросы)
+        # K+3 — проверяем дату и статус
         need_filter = (min_days_until_end is not None and min_days_until_end > 0) or require_status
         if need_filter:
             step_callback(step_filter, "running", "")
@@ -142,7 +146,10 @@ def run_pipeline(
                 for i, mid in enumerate(result):
                     if i > 0:
                         time.sleep(0.1)
-                    if _check_market(base_url, api_key, mid, min_days_until_end, require_status, date_fields, today):
+                    m = fetch_market(base_url, api_key, mid)
+                    if m is not None:
+                        markets_by_id[mid] = m  # кэшируем для следующих шагов
+                    if _check_market_from_data(m, min_days_until_end, require_status, date_fields, today):
                         filtered.append(mid)
             removed_by_filter = len(result) - len(filtered)
             result = filtered
@@ -155,7 +162,26 @@ def run_pipeline(
         else:
             step_callback(step_filter, "skip", "Фильтры не заданы")
 
-        # K+4 — сохраняем
+        # K+4 — фильтр по Polymarket/Kalshi (только если включён)
+        if use_kalshi_filter:
+            step_callback(step_kalshi, "running", "")
+
+            # Дозапрашиваем маркеты, которых нет в кэше
+            ids_to_fetch: list[int] = [mid for mid in result if mid not in markets_by_id]
+            for i, mid in enumerate(ids_to_fetch):
+                if i > 0:
+                    time.sleep(0.1)
+                m = fetch_market(base_url, api_key, mid)
+                if m is not None:
+                    markets_by_id[mid] = m
+
+            result, removed = filter_by_cross_platform(result, markets_by_id)
+            step_callback(step_kalshi, "done", f"Исключено {removed}, осталось {len(result)}")
+        else:
+            # Шаг не используется — но его нет в списке, так что ничего не делаем
+            pass
+
+        # K+4 или K+5 — сохраняем
         step_callback(step_save, "running", "")
         Path(output_file).write_text(",".join(str(x) for x in result), encoding="utf-8")
         step_callback(step_save, "done", f"Сохранено {len(result)} id в {output_file}")
