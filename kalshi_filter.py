@@ -12,9 +12,13 @@
 """
 import re
 import time
+from datetime import date as date_type
 from typing import Any
 
 import requests
+
+# Кэш дат с Polymarket: conditionId → date или None
+_poly_date_cache: dict[str, date_type | None] = {}
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
@@ -35,6 +39,26 @@ def _is_on_polymarket(market_data: dict[str, Any]) -> bool:
     """True если маркет напрямую связан с Polymarket (поле уже есть в данных Predict.fun)."""
     ids = market_data.get("polymarketConditionIds")
     return bool(ids)
+
+
+def _check_polymarket_date(condition_ids: list[str], min_days: int, today: date_type) -> bool:
+    """
+    True если до окончания маркета на Polymarket осталось >= min_days дней.
+    При ошибке или отсутствии даты — True (не фильтруем).
+    """
+    from api_client import fetch_polymarket_end_date  # импорт здесь, чтобы избежать кольца
+
+    for cid in condition_ids:
+        if cid in _poly_date_cache:
+            end = _poly_date_cache[cid]
+        else:
+            end = fetch_polymarket_end_date(cid)
+            _poly_date_cache[cid] = end
+
+        if end is not None:
+            return (end - today).days >= min_days
+
+    return True  # дата не найдена — не фильтруем
 
 
 def _extract_keywords(title: str) -> list[str]:
@@ -81,13 +105,18 @@ def filter_by_cross_platform(
     market_data: dict[int, dict[str, Any]],
     min_keyword_matches: int = 2,
     delay: float = 0.2,
+    min_days: int | None = None,
+    today: date_type | None = None,
 ) -> tuple[list[int], int]:
     """
     Оставляет только маркеты, которые есть на Polymarket или Kalshi.
+    Если min_days задан — дополнительно проверяет срок до окончания через Polymarket API.
 
     Порядок проверки:
-      1. polymarketConditionIds непусто → оставляем сразу (нет доп. запросов)
-      2. Иначе → текстовый поиск на Kalshi
+      1. polymarketConditionIds непусто → маркет на Polymarket
+         - если min_days задан → проверяем дату окончания
+         → оставляем если дата ок (или неизвестна)
+      2. Иначе → текстовый поиск на Kalshi (дату не проверяем)
       3. Не нашли нигде → убираем
 
     market_data: {market_id: полный объект маркета из Predict.fun API}
@@ -95,12 +124,18 @@ def filter_by_cross_platform(
     """
     result: list[int] = []
     kalshi_checked = 0
+    _today = today or date_type.today()
 
     for i, mid in enumerate(market_ids):
         mdata = market_data.get(mid) or {}
 
         # Быстрая проверка: есть ли прямая ссылка на Polymarket
         if _is_on_polymarket(mdata):
+            # Если задан фильтр по дате — проверяем через Polymarket API
+            if min_days and min_days > 0:
+                condition_ids = mdata.get("polymarketConditionIds") or []
+                if not _check_polymarket_date(condition_ids, min_days, _today):
+                    continue  # слишком мало дней — убираем
             result.append(mid)
             continue
 

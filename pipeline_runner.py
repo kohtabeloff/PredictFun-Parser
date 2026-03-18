@@ -175,8 +175,13 @@ def run_pipeline(
                 if m is not None:
                     markets_by_id[mid] = m
 
-            result, removed = filter_by_cross_platform(result, markets_by_id)
-            step_callback(step_kalshi, "done", f"Исключено {removed}, осталось {len(result)}")
+            result, removed = filter_by_cross_platform(
+                result, markets_by_id, min_days=min_days_until_end
+            )
+            detail = f"Исключено {removed}, осталось {len(result)}"
+            if min_days_until_end and min_days_until_end > 0:
+                detail += f" (мин. {min_days_until_end} дн.)"
+            step_callback(step_kalshi, "done", detail)
         else:
             # Шаг не используется — но его нет в списке, так что ничего не делаем
             pass

@@ -4,6 +4,35 @@ from typing import Any
 
 import requests
 
+POLYMARKET_API = "https://gamma-api.polymarket.com"
+
+
+def fetch_polymarket_end_date(condition_id: str) -> date | None:
+    """Получает дату окончания маркета с Polymarket по conditionId. Возвращает None при ошибке."""
+    try:
+        resp = requests.get(
+            f"{POLYMARKET_API}/markets",
+            params={"conditionIds": condition_id},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        markets = resp.json()
+        if not markets or not isinstance(markets, list):
+            return None
+        for m in markets:
+            raw = m.get("endDateIso") or m.get("endDate")
+            if not raw:
+                continue
+            s = str(raw).strip()[:10]  # берём только YYYY-MM-DD
+            try:
+                return date.fromisoformat(s)
+            except ValueError:
+                continue
+        return None
+    except Exception:
+        return None
+
 
 def fetch_market(base_url: str, api_key: str, market_id: int) -> dict[str, Any] | None:
     """GET /v1/markets/{id}. Возвращает data маркета или None при ошибке."""

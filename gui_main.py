@@ -395,6 +395,7 @@ def build_step_labels(
     selected_tag_names: list[str],
     has_filter: bool,
     use_kalshi: bool = False,
+    min_days: int | None = None,
 ) -> list[str]:
     labels = ["Ожидаем настроек пользователя"]
     labels.append(
@@ -410,7 +411,10 @@ def build_step_labels(
     else:
         labels.append("Проверка даты и статуса")
     if use_kalshi:
-        labels.append("Проверяем наличие на Polymarket / Kalshi")
+        if min_days and min_days > 0:
+            labels.append(f"Проверяем Polymarket / Kalshi  (+ мин. {min_days} дн. до окончания)")
+        else:
+            labels.append("Проверяем наличие на Polymarket / Kalshi")
     labels.append("Сохранение результата")
     return labels
 
@@ -583,10 +587,15 @@ class MainWindow(QWidget):
         row3 = QHBoxLayout()
         self.kalshi_check = QCheckBox("Фильтр Polymarket / Kalshi (оставить только маркеты, которые есть на других платформах)")
         self.kalshi_check.setChecked(False)
+        self.kalshi_check.stateChanged.connect(self._on_kalshi_toggle)
         self.kalshi_check.stateChanged.connect(self._refresh_steps_preview)
         row3.addWidget(self.kalshi_check)
         row3.addStretch()
         opts_layout.addLayout(row3)
+
+        # Дни недоступны без Polymarket/Kalshi — блокируем сразу
+        self.days_check.setEnabled(False)
+        self.days_check.setToolTip("Доступно только с фильтром Polymarket / Kalshi")
 
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
@@ -636,6 +645,14 @@ class MainWindow(QWidget):
         self.file_group.setVisible(not use_all)
         self._refresh_steps_preview()
 
+    def _on_kalshi_toggle(self, state):
+        """Включает/выключает чекбокс дней вместе с галочкой Polymarket/Kalshi."""
+        kalshi_on = bool(state)
+        self.days_check.setEnabled(kalshi_on)
+        if not kalshi_on:
+            self.days_check.setChecked(False)
+            self.days_spin.setEnabled(False)
+
     def _on_days_toggle(self, state):
         self.days_spin.setEnabled(bool(state))
 
@@ -675,7 +692,8 @@ class MainWindow(QWidget):
         status_active = self.status_check.isChecked()
         has_filter = days_active or status_active
         use_kalshi = self.kalshi_check.isChecked()
-        labels = build_step_labels(use_all, [name for name, _ in selected], has_filter, use_kalshi)
+        min_days_val = self.days_spin.value() if (use_kalshi and self.days_check.isChecked()) else None
+        labels = build_step_labels(use_all, [name for name, _ in selected], has_filter, use_kalshi, min_days_val)
         for i, label in enumerate(labels):
             row = StepRow(i, label)
             self.step_rows.append(row)
