@@ -10,6 +10,8 @@
 
 При любой ошибке запроса к Kalshi — маркет оставляем (не теряем лишнего).
 """
+from __future__ import annotations
+
 import re
 import time
 from datetime import date as date_type

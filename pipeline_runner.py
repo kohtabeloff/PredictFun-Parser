@@ -10,6 +10,8 @@
   K+4      — проверка на Kalshi (только если use_kalshi_filter=True)
   K+4/K+5  — сохранение (K+4 если без Kalshi, K+5 если с Kalshi)
 """
+from __future__ import annotations
+
 import time
 from datetime import date
 from pathlib import Path
