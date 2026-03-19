@@ -6,32 +6,29 @@ from typing import Any
 
 import requests
 
-POLYMARKET_API = "https://gamma-api.polymarket.com"
+POLYMARKET_CLOB_API = "https://clob.polymarket.com"
 
 
 def fetch_polymarket_end_date(condition_id: str) -> date | None:
     """Получает дату окончания маркета с Polymarket по conditionId. Возвращает None при ошибке."""
     try:
         resp = requests.get(
-            f"{POLYMARKET_API}/markets",
-            params={"conditionIds": condition_id},
+            f"{POLYMARKET_CLOB_API}/markets/{condition_id}",
             timeout=15,
         )
         if resp.status_code != 200:
             return None
-        markets = resp.json()
-        if not markets or not isinstance(markets, list):
+        market = resp.json()
+        if not market or not isinstance(market, dict):
             return None
-        for m in markets:
-            raw = m.get("endDateIso") or m.get("endDate")
-            if not raw:
-                continue
-            s = str(raw).strip()[:10]  # берём только YYYY-MM-DD
-            try:
-                return date.fromisoformat(s)
-            except ValueError:
-                continue
-        return None
+        raw = market.get("end_date_iso")
+        if not raw:
+            return None
+        s = str(raw).strip()[:10]  # берём только YYYY-MM-DD
+        try:
+            return date.fromisoformat(s)
+        except ValueError:
+            return None
     except Exception:
         return None
 
