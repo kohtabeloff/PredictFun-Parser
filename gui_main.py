@@ -573,14 +573,14 @@ class MainWindow(QWidget):
 
         row2 = QHBoxLayout()
         self.status_check = QCheckBox("Статус маркета:")
-        self.status_check.setChecked(False)
+        self.status_check.setChecked(True)
         self.status_check.stateChanged.connect(self._on_status_toggle)
         self.status_check.stateChanged.connect(self._refresh_steps_preview)
         row2.addWidget(self.status_check)
         self.status_combo = QComboBox()
         for s in STATUSES[1:]:
             self.status_combo.addItem(s, s)
-        self.status_combo.setEnabled(False)
+        self.status_combo.setEnabled(True)
         self.status_combo.currentIndexChanged.connect(self._refresh_steps_preview)
         row2.addWidget(self.status_combo)
         row2.addStretch()
